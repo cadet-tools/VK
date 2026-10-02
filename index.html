@@ -202,11 +202,75 @@ function residualMeters(){
 }
 
 class AffineImageOverlay extends L.Layer{
-  constructor(url){super();this.url=url;this.opacity=.55;this.img=new Image();this.img.src=url;}
-  onAdd(map){this.map=map;this.canvas=L.DomUtil.create('canvas','leaflet-zoom-animated');this.canvas.style.position='absolute';this.canvas.style.pointerEvents='none';map.getPanes().overlayPane.appendChild(this.canvas);this._draw=()=>this.draw();map.on('move zoom resize',this._draw);this.img.onload=()=>this.draw();this.draw();}
-  onRemove(map){map.off('move zoom resize',this._draw);this.canvas.remove();}
-  setOpacity(v){this.opacity=v;this.draw();}
-  draw(){if(!model||!this.map||!this.img.complete)return;let s=this.map.getSize();this.canvas.width=s.x;this.canvas.height=s.y;this.canvas.style.width=s.x+'px';this.canvas.style.height=s.y+'px';let q0=this.map.latLngToContainerPoint(imgToLatLng(0,0)),qx=this.map.latLngToContainerPoint(imgToLatLng(IMG_W,0)),qy=this.map.latLngToContainerPoint(imgToLatLng(0,IMG_H));let ctx=this.canvas.getContext('2d');ctx.clearRect(0,0,s.x,s.y);ctx.globalAlpha=this.opacity;ctx.setTransform((qx.x-q0.x)/IMG_W,(qx.y-q0.y)/IMG_W,(qy.x-q0.x)/IMG_H,(qy.y-q0.y)/IMG_H,q0.x,q0.y);ctx.drawImage(this.img,0,0,IMG_W,IMG_H);ctx.setTransform(1,0,0,1,0,0);}
+  constructor(url){
+    super();
+    this.url=url;
+    this.opacity=.55;
+    this.img=new Image();
+    this.img.src=url;
+  }
+  onAdd(map){
+    this.map=map;
+    this.canvas=L.DomUtil.create('canvas','leaflet-zoom-animated');
+    this.canvas.style.position='absolute';
+    this.canvas.style.pointerEvents='none';
+    this.canvas.style.transformOrigin='0 0';
+    map.getPanes().overlayPane.appendChild(this.canvas);
+
+    // SVARĪGI: panoramēšanas laikā Leaflet pats pārvieto overlayPane.
+    // Tāpēc slāni pārrēķinām tikai pēc skata maiņas beigām, nevis katrā "move" kadrā.
+    this._draw=()=>this.draw();
+    map.on('moveend zoomend resize viewreset',this._draw);
+    this.img.onload=()=>this.draw();
+    this.draw();
+  }
+  onRemove(map){
+    map.off('moveend zoomend resize viewreset',this._draw);
+    this.canvas.remove();
+  }
+  setOpacity(v){
+    this.opacity=v;
+    this.draw();
+  }
+  draw(){
+    if(!model||!this.map||!this.img.complete)return;
+
+    // Lietojam LAYER punktus, nevis CONTAINER punktus.
+    // Tas novērš "dubulto pārvietošanos" panoramēšanas laikā.
+    const p0=this.map.latLngToLayerPoint(imgToLatLng(0,0));
+    const px=this.map.latLngToLayerPoint(imgToLatLng(IMG_W,0));
+    const py=this.map.latLngToLayerPoint(imgToLatLng(0,IMG_H));
+    const pxy=this.map.latLngToLayerPoint(imgToLatLng(IMG_W,IMG_H));
+
+    const minX=Math.floor(Math.min(p0.x,px.x,py.x,pxy.x))-4;
+    const minY=Math.floor(Math.min(p0.y,px.y,py.y,pxy.y))-4;
+    const maxX=Math.ceil(Math.max(p0.x,px.x,py.x,pxy.x))+4;
+    const maxY=Math.ceil(Math.max(p0.y,px.y,py.y,pxy.y))+4;
+
+    const w=Math.max(1,maxX-minX);
+    const h=Math.max(1,maxY-minY);
+
+    this.canvas.width=w;
+    this.canvas.height=h;
+    this.canvas.style.width=w+'px';
+    this.canvas.style.height=h+'px';
+    L.DomUtil.setPosition(this.canvas,L.point(minX,minY));
+
+    const ctx=this.canvas.getContext('2d');
+    ctx.clearRect(0,0,w,h);
+    ctx.globalAlpha=this.opacity;
+
+    const a=(px.x-p0.x)/IMG_W;
+    const b=(px.y-p0.y)/IMG_W;
+    const c=(py.x-p0.x)/IMG_H;
+    const d=(py.y-p0.y)/IMG_H;
+    const e=p0.x-minX;
+    const f=p0.y-minY;
+
+    ctx.setTransform(a,b,c,d,e,f);
+    ctx.drawImage(this.img,0,0,IMG_W,IMG_H);
+    ctx.setTransform(1,0,0,1,0,0);
+  }
 }
 
 function renderSelect(){
@@ -278,7 +342,30 @@ function togglePlaced(){placed[targetId]=!placed[targetId];localStorage.setItem(
 
 function renderPairs(){
   $('pairs').innerHTML=pairs.map((p,i)=>`<div class="pair"><b>${i+1}.</b> LOF (${Math.round(p.px)}, ${Math.round(p.py)}) → ${p.lat.toFixed(6)}, ${p.lng.toFixed(6)} <button onclick="removePair(${i})" style="float:right">✕</button></div>`).join('');
-  if(pairs.length>=3){try{model=fitAffine(pairs);let err=residualMeters();$('calStats').className='status '+(err<10?'good':err<25?'warn':'bad');$('calStats').textContent=`Piesaiste aktīva. RMS kļūda: ~${err.toFixed(1)} m (${pairs.length} punkti).`;localStorage.setItem('vk2026_pairs',JSON.stringify(pairs));$('copyLinkBtn').disabled=false;renderControls();}catch(e){model=null;$('calStats').textContent='Piesaisti nevar aprēķināt: '+e.message}} else {model=null;$('copyLinkBtn').disabled=true;$('calStats').className='status warn';$('calStats').textContent=`Vajag vēl ${3-pairs.length} piesaistes punktu(s).`}
+  if(pairs.length>=3){
+    try{
+      model=fitAffine(pairs);
+      let err=residualMeters();
+      if(pairs.length===3){
+        $('calStats').className='status warn';
+        $('calStats').textContent='Piesaiste darbojas ar 3 punktiem, bet tā vēl nav uzticama. Pievieno vēl vismaz 2–3 punktus dažādās kartes malās.';
+      }else{
+        $('calStats').className='status '+(err<10?'good':err<25?'warn':'bad');
+        $('calStats').textContent=`Piesaiste aktīva. RMS kļūda: ~${err.toFixed(1)} m (${pairs.length} punkti).`;
+      }
+      localStorage.setItem('vk2026_pairs',JSON.stringify(pairs));
+      $('copyLinkBtn').disabled=false;
+      renderControls();
+    }catch(e){
+      model=null;
+      $('calStats').textContent='Piesaisti nevar aprēķināt: '+e.message
+    }
+  } else {
+    model=null;
+    $('copyLinkBtn').disabled=true;
+    $('calStats').className='status warn';
+    $('calStats').textContent=`Vajag vēl ${3-pairs.length} piesaistes punktu(s).`
+  }
   updateNav();
 }
 window.removePair=i=>{pairs.splice(i,1);renderPairs()}
@@ -372,7 +459,7 @@ $('layersBtn').onclick=()=>{document.querySelector('.leaflet-control-layers-togg
 $('addPairBtn').onclick=beginPair;$('resetPairsBtn').onclick=()=>{if(confirm('Notīrīt visus piesaistes punktus?')){pairs=[];localStorage.removeItem('vk2026_pairs');if(lofOverlay){map.removeLayer(lofOverlay);lofOverlay=null}renderPairs()}};
 $('cancelCal').onclick=()=>$('calOverlay').classList.remove('open');
 $('opacity').oninput=e=>{lofOpacity=e.target.value/100;if(lofOverlay)lofOverlay.setOpacity(lofOpacity)};
-$('overlayToggle').onchange=e=>{lofVisible=e.target.checked;if(!lofOverlay)return;if(lofVisible){if(!map.hasLayer(lofOverlay))lofOverlay.addTo(map)}else if(map.hasLayer(lofOverlay))map.removeLayer(lofOverlay)};
+$('overlayToggle').onchange=e=>{lofVisible=e.target.checked;if(!lofOverlay)return;if(lofVisible){if(!map.hasLayer(lofOverlay))lofOverlay.addTo(map);else lofOverlay.draw()}else if(map.hasLayer(lofOverlay))map.removeLayer(lofOverlay)};
 $('copyLinkBtn').onclick=copyLink;$('exportBtn').onclick=exportCfg;
 $('importFile').onchange=async e=>{try{importCfg(JSON.parse(await e.target.files[0].text()))}catch(err){alert(err.message)}};
 $('loadWmsBtn').onclick=loadWms;$('addWmsBtn').onclick=addWms;
