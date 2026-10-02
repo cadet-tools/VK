@@ -36,8 +36,11 @@ select,input{width:100%;background:#0f1511;color:#fff;border:1px solid var(--lin
 .cal-overlay{display:none;position:absolute;z-index:2000;inset:0;background:#0c100d}
 .cal-overlay.open{display:flex;flex-direction:column}
 .cal-head{padding:10px;display:flex;gap:8px;align-items:center;background:#151c17}
-.cal-wrap{flex:1;overflow:auto;position:relative;background:#222}
-.cal-wrap img{display:block;width:100%;height:auto;min-width:900px;cursor:crosshair}
+.cal-wrap{flex:1;overflow:auto;position:relative;background:#222;overscroll-behavior:contain}
+.cal-wrap img{display:block;width:100%;height:auto;max-width:none;min-width:0;cursor:crosshair;user-select:none;-webkit-user-drag:none}
+.cal-tools{margin-left:auto;display:flex;gap:6px;align-items:center}
+.cal-tools .iconbtn{padding:8px 11px;min-width:42px}
+.zoom-label{min-width:58px;text-align:center;font-weight:800;font-size:12px;color:#fff}
 .cross{position:absolute;width:24px;height:24px;border:2px solid red;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}
 .cross:after,.cross:before{content:"";position:absolute;background:red}.cross:after{width:32px;height:2px;left:-6px;top:9px}.cross:before{height:32px;width:2px;left:9px;top:-6px}
 .legend{font-size:11px;color:var(--muted)}
@@ -123,7 +126,13 @@ select,input{width:100%;background:#0f1511;color:#fff;border:1px solid var(--lin
 <div id="calOverlay" class="cal-overlay">
   <div class="cal-head">
     <button id="cancelCal" class="iconbtn">← Atcelt</button>
-    <div><b>1/2 — atzīmē objektu LOF kartē</b><div class="hint">Izvēlies krustojumu, tiltu, ēkas stūri vai citu precīzu objektu.</div></div>
+    <div><b>1/2 — atzīmē objektu LOF kartē</b><div class="hint">Pietuvini karti un izvēlies krustojumu, tiltu, ēkas stūri vai citu precīzu objektu.</div></div>
+    <div class="cal-tools">
+      <button id="zoomOutBtn" class="iconbtn" title="Attālināt">−</button>
+      <div id="zoomLabel" class="zoom-label">100%</div>
+      <button id="zoomInBtn" class="iconbtn" title="Pietuvināt">+</button>
+      <button id="zoomFitBtn" class="iconbtn" title="Ietilpināt ekrānā">Fit</button>
+    </div>
   </div>
   <div id="calWrap" class="cal-wrap"><img id="calImg" src="lof-map.jpg" alt="LOF karte"></div>
 </div>
@@ -153,6 +162,7 @@ let targetLatLng=null;
 let userLatLng=null,userAcc=null,userMarker=null,accCircle=null,routeLine=null,watchId=null;
 let lofOverlay=null, lofVisible=true, lofOpacity=.55, lvmLayer=null;
 let pendingPixel=null;
+let calZoom=1;
 let placed=JSON.parse(localStorage.getItem('vk2026_placed')||'{}');
 
 function merc(ll){
@@ -272,10 +282,60 @@ function renderPairs(){
   updateNav();
 }
 window.removePair=i=>{pairs.splice(i,1);renderPairs()}
-function beginPair(){$('calOverlay').classList.add('open');pendingPixel=null;document.querySelectorAll('.cross').forEach(x=>x.remove())}
+
+function setCalZoom(next, keepCenter=true){
+  const wrap=$('calWrap'), img=$('calImg');
+  const oldZoom=calZoom;
+  const oldCenterX=wrap.scrollLeft + wrap.clientWidth/2;
+  const oldCenterY=wrap.scrollTop + wrap.clientHeight/2;
+  calZoom=Math.max(1,Math.min(6,next));
+  img.style.width=(calZoom*100)+'%';
+  $('zoomLabel').textContent=Math.round(calZoom*100)+'%';
+
+  if(keepCenter){
+    requestAnimationFrame(()=>{
+      const factor=calZoom/oldZoom;
+      wrap.scrollLeft=Math.max(0,oldCenterX*factor-wrap.clientWidth/2);
+      wrap.scrollTop=Math.max(0,oldCenterY*factor-wrap.clientHeight/2);
+    });
+  }
+}
+function fitCalMap(){
+  calZoom=1;
+  $('calImg').style.width='100%';
+  $('zoomLabel').textContent='100%';
+  $('calWrap').scrollTo({left:0,top:0,behavior:'smooth'});
+}
+function beginPair(){
+  $('calOverlay').classList.add('open');
+  pendingPixel=null;
+  document.querySelectorAll('.cross').forEach(x=>x.remove());
+  requestAnimationFrame(()=>setCalZoom(calZoom,false));
+}
+
+$('zoomInBtn').onclick=()=>setCalZoom(calZoom+0.5);
+$('zoomOutBtn').onclick=()=>setCalZoom(calZoom-0.5);
+$('zoomFitBtn').onclick=fitCalMap;
+
+// Pele/trackpad: rullītis virs LOF kartes pietuvina/attālina.
+$('calWrap').addEventListener('wheel',e=>{
+  if(!$('calOverlay').classList.contains('open')) return;
+  e.preventDefault();
+  setCalZoom(calZoom+(e.deltaY<0?0.25:-0.25));
+},{passive:false});
+
+// Dubultklikšķis ātri pietuvina.
+$('calImg').addEventListener('dblclick',e=>{
+  e.preventDefault();
+  setCalZoom(calZoom+0.5);
+});
+
 $('calImg').addEventListener('click',e=>{
   let r=e.target.getBoundingClientRect(),px=(e.clientX-r.left)/r.width*IMG_W,py=(e.clientY-r.top)/r.height*IMG_H;pendingPixel={px,py};
-  let cross=document.createElement('div');cross.className='cross';cross.style.left=(e.offsetX)+'px';cross.style.top=(e.offsetY)+'px';$('calWrap').appendChild(cross);
+  let cross=document.createElement('div');cross.className='cross';
+  cross.style.left=(e.target.offsetLeft+e.offsetX)+'px';
+  cross.style.top=(e.target.offsetTop+e.offsetY)+'px';
+  $('calWrap').appendChild(cross);
   setTimeout(()=>{$('calOverlay').classList.remove('open');alert('2/2 — tagad uz pamatkartes pieskaries TIEŠI TAM PAŠAM objektam. Vari vispirms pietuvināt karti.');map.once('click',onMapPair)},180);
 });
 function onMapPair(e){pairs.push({px:pendingPixel.px,py:pendingPixel.py,lat:e.latlng.lat,lng:e.latlng.lng});pendingPixel=null;renderPairs();$('adminPanel').classList.add('open')}
