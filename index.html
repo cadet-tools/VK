@@ -71,7 +71,7 @@ select,input{width:100%;background:#0f1511;color:#fff;border:1px solid var(--lin
 <div id="map"></div>
 
 <div class="topbar">
-  <div class="card title"><b>Vējiņu kauss 2026</b><span>Kontrolpunktu izvietošana · v6</span></div>
+  <div class="card title"><b>Vējiņu kauss 2026</b><span>Kontrolpunktu izvietošana · v7</span></div>
   <div class="spacer"></div>
   <button id="layersBtn" class="iconbtn" title="Slāņi">🗺️</button>
   <button id="adminBtn" class="iconbtn" title="Iestatījumi">⚙️</button>
@@ -184,6 +184,7 @@ let targetId="21";
 let targetLatLng=null;
 let userLatLng=null,userAcc=null,userMarker=null,accCircle=null,routeLine=null,watchId=null;
 let gpsStarting=false;
+let pendingNearest=false;
 let lofOverlay=null, lofVisible=true, lofOpacity=.55, lvmLayer=null;
 let pendingPixel=null;
 let mapCalMarker=null;
@@ -368,17 +369,22 @@ function applyGpsPosition(p){
   $('gpsBtn').textContent='⏹ Apturēt GPS';
   gpsStarting=false;
   updateNav();
+
+  if(pendingNearest){
+    pendingNearest=false;
+    nearest();
+  }
 }
 
 function gpsErrorMessage(e){
   if(e.code===1){
-    return 'Atrašanās vietas atļauja ir BLOĶĒTA. Pārlūka vietnes iestatījumos atļauj Location/Atrašanās vieta šai lapai un mēģini vēlreiz.';
+    return 'Atrašanās vieta šai lapai nav atļauta. iPhone: Safari adreses joslā atver vietnes iestatījumus → Location/Atrašanās vieta → Allow/Atļaut. Ja tur nav pieejams, pārbaudi Settings → Privacy & Security → Location Services.';
   }
   if(e.code===2){
-    return 'Telefons pašlaik nevar noteikt atrašanās vietu. Ieslēdz telefona atrašanās vietas pakalpojumu (GPS/Location) un mēģini vēlreiz.';
+    return 'Telefons pašlaik nevar noteikt atrašanās vietu. Pārbaudi, vai iPhone/Android ir ieslēgti Location Services/Atrašanās vietas pakalpojumi.';
   }
   if(e.code===3){
-    return 'GPS atrašanās vietas noteikšana aizņēma pārāk ilgi. Izej ārā vai pie loga un mēģini vēlreiz.';
+    return 'GPS atrašanās vietas noteikšana aizņēma pārāk ilgi. Pamēģini vēlreiz ārā vai vietā ar labāku GPS uztveršanu.';
   }
   return 'GPS kļūda: '+(e.message||'nezināma kļūda');
 }
@@ -395,22 +401,22 @@ function handleGpsError(e){
   $('status').textContent=gpsErrorMessage(e);
 }
 
-async function startGps(){
+function startGps(){
   if(gpsStarting)return;
 
   if(watchId!==null){
     navigator.geolocation.clearWatch(watchId);
     watchId=null;
     $('gpsBtn').disabled=false;
-    $('gpsBtn').textContent='📍 Sākt GPS';
+    $('gpsBtn').textContent='📍 Pieprasīt GPS';
     $('status').className='status warn';
-    $('status').textContent='GPS apturēts. Nospied “Sākt GPS”, lai turpinātu.';
+    $('status').textContent='GPS apturēts. Nospied “Pieprasīt GPS”, lai turpinātu.';
     return;
   }
 
   if(!window.isSecureContext){
     $('status').className='status bad';
-    $('status').textContent='GPS pārlūkā darbojas tikai drošā HTTPS lapā.';
+    $('status').textContent='GPS pārlūkā darbojas tikai HTTPS lapā.';
     return;
   }
 
@@ -424,25 +430,11 @@ async function startGps(){
   $('gpsBtn').disabled=true;
   $('gpsBtn').textContent='⏳ Gaida GPS atļauju…';
   $('status').className='status warn';
-  $('status').textContent='Pārlūkam jāparāda atrašanās vietas atļaujas pieprasījums. Izvēlies “Atļaut”.';
+  $('status').textContent='Atļauj pārlūkam izmantot tavu atrašanās vietu.';
 
-  // Chromium/Android var pateikt, ka atļauja jau iepriekš nobloķēta.
-  try{
-    if(navigator.permissions && navigator.permissions.query){
-      const perm=await navigator.permissions.query({name:'geolocation'});
-      if(perm.state==='denied'){
-        gpsStarting=false;
-        $('gpsBtn').disabled=false;
-        $('gpsBtn').textContent='📍 Pieprasīt GPS';
-        $('status').className='status bad';
-        $('status').textContent='Atrašanās vietas atļauja šai vietnei ir bloķēta. Atver pārlūka vietnes iestatījumus un atļauj “Location/Atrašanās vieta”.';
-        return;
-      }
-    }
-  }catch(_){}
-
-  // Pirmais vienreizējais pieprasījums tiek veikts tieši no lietotāja pogas
-  // nospiešanas, lai mobilais pārlūks droši parādītu permission dialogu.
+  // SVARĪGI iPhone/Safari:
+  // getCurrentPosition tiek izsaukts UZREIZ no pogas pieskāriena.
+  // Pirms tā nav neviena await/Permissions API pieprasījuma.
   navigator.geolocation.getCurrentPosition(
     p=>{
       applyGpsPosition(p);
@@ -450,7 +442,7 @@ async function startGps(){
       watchId=navigator.geolocation.watchPosition(
         applyGpsPosition,
         e=>{
-          // Ja sākotnējā pozīcija jau iegūta, īslaicīgu timeout dēļ GPS neatceļam.
+          // Vienreizējs timeout pēc pirmā veiksmīgā fix nav kritisks.
           if(e.code===3)return;
           handleGpsError(e);
         },
@@ -469,9 +461,22 @@ async function startGps(){
     }
   );
 }
+
 function nearest(){
-  if(!userLatLng||!model){alert('Vispirms ieslēdz GPS un pabeidz kartes piesaisti.');return}
-  let best=null;for(const c of CONTROLS){let ll=imgToLatLng(c.px,c.py),d=map.distance(userLatLng,ll);if(!best||d<best.d)best={id:c.id,d}}
+  if(!model){
+    alert('Vispirms jāpabeidz LOF kartes piesaiste koordinātēm.');
+    return;
+  }
+  if(!userLatLng){
+    pendingNearest=true;
+    startGps();
+    return;
+  }
+  let best=null;
+  for(const c of CONTROLS){
+    let ll=imgToLatLng(c.px,c.py),d=map.distance(userLatLng,ll);
+    if(!best||d<best.d)best={id:c.id,d};
+  }
   if(best)selectTarget(best.id,true);
 }
 function drawCrop(){
