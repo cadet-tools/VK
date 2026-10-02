@@ -59,7 +59,7 @@ select,input{width:100%;background:#0f1511;color:#fff;border:1px solid var(--lin
 <div id="map"></div>
 
 <div class="topbar">
-  <div class="card title"><b>Vējiņu kauss 2026</b><span>Kontrolpunktu izvietošana</span></div>
+  <div class="card title"><b>Vējiņu kauss 2026</b><span>Kontrolpunktu izvietošana · v4</span></div>
   <div class="spacer"></div>
   <button id="layersBtn" class="iconbtn" title="Slāņi">🗺️</button>
   <button id="adminBtn" class="iconbtn" title="Iestatījumi">⚙️</button>
@@ -140,9 +140,20 @@ select,input{width:100%;background:#0f1511;color:#fff;border:1px solid var(--lin
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const IMG_W=2481, IMG_H=1754;
-const CONTROLS=[{"id": "21", "px": 1500.6, "py": 1122.6}, {"id": "23", "px": 1576.2, "py": 297.0}, {"id": "31", "px": 990.6, "py": 834.6}, {"id": "32", "px": 814.2, "py": 1189.8}, {"id": "33", "px": 1653.0, "py": 927.0}, {"id": "35", "px": 753.0, "py": 949.8}, {"id": "41", "px": 1825.8, "py": 501.0}, {"id": "42", "px": 1333.8, "py": 408.6}, {"id": "43", "px": 1212.6, "py": 508.2}, {"id": "44", "px": 805.8, "py": 801.0}, {"id": "46", "px": 1517.4, "py": 948.6}, {"id": "47", "px": 694.2, "py": 1138.2}, {"id": "48", "px": 2352.6, "py": 714.6}, {"id": "49", "px": 1853.4, "py": 791.4}, {"id": "50", "px": 1645.8, "py": 1199.4}, {"id": "51", "px": 1335.0, "py": 588.6}, {"id": "52", "px": 1710.6, "py": 264.6}, {"id": "53", "px": 2287.8, "py": 406.2}, {"id": "54", "px": 1642.2, "py": 753.0}, {"id": "55", "px": 282.6, "py": 1060.2}, {"id": "56", "px": 2135.4, "py": 282.6}, {"id": "57", "px": 2106.6, "py": 631.8}, {"id": "61", "px": 2175.0, "py": 874.2}, {"id": "62", "px": 1507.8, "py": 1584.6}, {"id": "63", "px": 1673.4, "py": 1515.0}, {"id": "81", "px": 1678.2, "py": 892.2}, {"id": "82", "px": 2399.4, "py": 1047.0}, {"id": "83", "px": 1931.4, "py": 144.6}, {"id": "91", "px": 1594.2, "py": 623.4}, {"id": "92", "px": 106.2, "py": 1133.4}];
+const CONTROLS=[{"id":"21","px":1502.0,"py":1124.0},{"id":"23","px":1575.0,"py":297.0},{"id":"31","px":992.0,"py":836.0},{"id":"32","px":814.0,"py":1189.0},{"id":"33","px":1654.0,"py":927.0},{"id":"35","px":753.0,"py":952.0},{"id":"41","px":1825.0,"py":501.0},{"id":"42","px":1331.0,"py":409.0},{"id":"43","px":1211.0,"py":512.0},{"id":"44","px":807.0,"py":800.0},{"id":"46","px":1517.0,"py":947.0},{"id":"47","px":283.0,"py":1061.0},{"id":"48","px":2353.0,"py":716.0},{"id":"49","px":1855.0,"py":790.0},{"id":"50","px":697.0,"py":1135.0},{"id":"51","px":1333.0,"py":587.0},{"id":"52","px":1713.0,"py":266.0},{"id":"53","px":2288.0,"py":406.0},{"id":"54","px":1642.0,"py":751.0},{"id":"55","px":413.0,"py":928.0},{"id":"56","px":2135.0,"py":284.0},{"id":"57","px":2108.0,"py":633.0},{"id":"61","px":2175.0,"py":875.0},{"id":"62","px":1646.0,"py":1199.0},{"id":"63","px":1509.0,"py":1582.0},{"id":"81","px":1673.0,"py":1514.0},{"id":"82","px":2399.0,"py":1047.0},{"id":"83","px":1931.0,"py":145.0},{"id":"91","px":1593.0,"py":625.0},{"id":"92","px":106.0,"py":1136.0}];
 const START={id:"START",px:1063.8,py:738.6};
 const ALL=[START,...CONTROLS];
+const EXPECTED_IDS=["21","23","31","32","33","35","41","42","43","44","46","47","48","49","50","51","52","53","54","55","56","57","61","62","63","81","82","83","91","92"];
+(function validateControls(){
+  const ids=CONTROLS.map(c=>c.id);
+  const missing=EXPECTED_IDS.filter(id=>!ids.includes(id));
+  const duplicate=ids.filter((id,i)=>ids.indexOf(id)!==i);
+  if(CONTROLS.length!==30 || missing.length || duplicate.length){
+    console.error("KP datu kļūda", {count:CONTROLS.length,missing,duplicate});
+  } else {
+    console.info("VK v4: ielādēti visi 30 LOF kontrolpunkti.");
+  }
+})();
 const R=6378137;
 const $=id=>document.getElementById(id);
 
