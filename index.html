@@ -48,6 +48,18 @@ select,input{width:100%;background:#0f1511;color:#fff;border:1px solid var(--lin
 .kp-marker{width:34px;height:34px;border-radius:50%;border:3px solid #d73ad2;background:rgba(255,255,255,.68);display:flex;align-items:center;justify-content:center;font:bold 11px system-ui;color:#5a0057;box-shadow:0 1px 8px #0005}
 .kp-marker.sel{background:#fff200;border-color:#000;color:#000;transform:scale(1.15)}
 .user-dot{width:20px;height:20px;border-radius:50%;background:#1976ff;border:3px solid white;box-shadow:0 0 0 8px rgba(25,118,255,.18)}
+#map.calibrating,
+#map.calibrating .leaflet-container,
+#map.calibrating .leaflet-pane,
+#map.calibrating .leaflet-interactive,
+#map.calibrating .leaflet-grab,
+#map.calibrating .leaflet-dragging,
+#map.calibrating *{cursor:crosshair!important}
+.map-cal-cross{position:relative;width:30px;height:30px;pointer-events:none}
+.map-cal-cross:before,.map-cal-cross:after{content:"";position:absolute;background:#ff2b2b;box-shadow:0 0 3px #fff}
+.map-cal-cross:before{width:30px;height:2px;left:0;top:14px}
+.map-cal-cross:after{width:2px;height:30px;left:14px;top:0}
+.map-cal-cross-ring{position:absolute;left:8px;top:8px;width:14px;height:14px;border:2px solid #ff2b2b;border-radius:50%;box-shadow:0 0 3px #fff}
 .cropbox{margin-top:8px;display:none}.cropbox.open{display:block}
 #lofCrop{width:100%;height:180px;border-radius:12px;background:#ddd;border:1px solid #4a574d}
 .small{font-size:12px}.sep{height:1px;background:#2a352c;margin:15px 0}
@@ -59,7 +71,7 @@ select,input{width:100%;background:#0f1511;color:#fff;border:1px solid var(--lin
 <div id="map"></div>
 
 <div class="topbar">
-  <div class="card title"><b>Vējiņu kauss 2026</b><span>Kontrolpunktu izvietošana · v4</span></div>
+  <div class="card title"><b>Vējiņu kauss 2026</b><span>Kontrolpunktu izvietošana · v5</span></div>
   <div class="spacer"></div>
   <button id="layersBtn" class="iconbtn" title="Slāņi">🗺️</button>
   <button id="adminBtn" class="iconbtn" title="Iestatījumi">⚙️</button>
@@ -173,6 +185,7 @@ let targetLatLng=null;
 let userLatLng=null,userAcc=null,userMarker=null,accCircle=null,routeLine=null,watchId=null;
 let lofOverlay=null, lofVisible=true, lofOpacity=.55, lvmLayer=null;
 let pendingPixel=null;
+let mapCalMarker=null;
 let calZoom=1;
 let placed=JSON.parse(localStorage.getItem('vk2026_placed')||'{}');
 
@@ -434,9 +447,44 @@ $('calImg').addEventListener('click',e=>{
   cross.style.left=(e.target.offsetLeft+e.offsetX)+'px';
   cross.style.top=(e.target.offsetTop+e.offsetY)+'px';
   $('calWrap').appendChild(cross);
-  setTimeout(()=>{$('calOverlay').classList.remove('open');alert('2/2 — tagad uz pamatkartes pieskaries TIEŠI TAM PAŠAM objektam. Vari vispirms pietuvināt karti.');map.once('click',onMapPair)},180);
+  setTimeout(()=>{
+    $('calOverlay').classList.remove('open');
+    $('map').classList.add('calibrating');
+    alert('2/2 — tagad uz pamatkartes ar KRUSTIŅU pieskaries TIEŠI TAM PAŠAM objektam. Vari vispirms pietuvināt karti.');
+    map.once('click',onMapPair)
+  },180);
 });
-function onMapPair(e){pairs.push({px:pendingPixel.px,py:pendingPixel.py,lat:e.latlng.lat,lng:e.latlng.lng});pendingPixel=null;renderPairs();$('adminPanel').classList.add('open')}
+function onMapPair(e){
+  $('map').classList.remove('calibrating');
+
+  if(mapCalMarker){
+    map.removeLayer(mapCalMarker);
+    mapCalMarker=null;
+  }
+
+  mapCalMarker=L.marker(e.latlng,{
+    interactive:false,
+    zIndexOffset:3000,
+    icon:L.divIcon({
+      className:'',
+      html:'<div class="map-cal-cross"><div class="map-cal-cross-ring"></div></div>',
+      iconSize:[30,30],
+      iconAnchor:[15,15]
+    })
+  }).addTo(map);
+
+  setTimeout(()=>{
+    if(mapCalMarker){
+      map.removeLayer(mapCalMarker);
+      mapCalMarker=null;
+    }
+  },1200);
+
+  pairs.push({px:pendingPixel.px,py:pendingPixel.py,lat:e.latlng.lat,lng:e.latlng.lng});
+  pendingPixel=null;
+  renderPairs();
+  $('adminPanel').classList.add('open');
+}
 function cfg(){return {v:1,pairs,wms:{url:$('wmsUrl').value,layer:$('wmsLayer').value}}}
 function encodeCfg(o){return btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replaceAll('+','-').replaceAll('/','_').replaceAll('=','')}
 function decodeCfg(s){s=s.replaceAll('-','+').replaceAll('_','/');while(s.length%4)s+='=';return JSON.parse(decodeURIComponent(escape(atob(s))))}
@@ -468,7 +516,10 @@ $('cropBtn').onclick=()=>{$('cropBox').classList.toggle('open');drawCrop()};$('p
 $('adminBtn').onclick=()=>$('adminPanel').classList.add('open');$('closeAdmin').onclick=()=>$('adminPanel').classList.remove('open');
 $('layersBtn').onclick=()=>{document.querySelector('.leaflet-control-layers-toggle')?.click()}
 $('addPairBtn').onclick=beginPair;$('resetPairsBtn').onclick=()=>{if(confirm('Notīrīt visus piesaistes punktus?')){pairs=[];localStorage.removeItem('vk2026_pairs');if(lofOverlay){map.removeLayer(lofOverlay);lofOverlay=null}renderPairs()}};
-$('cancelCal').onclick=()=>$('calOverlay').classList.remove('open');
+$('cancelCal').onclick=()=>{
+  $('calOverlay').classList.remove('open');
+  $('map').classList.remove('calibrating');
+};
 $('opacity').oninput=e=>{lofOpacity=e.target.value/100;if(lofOverlay)lofOverlay.setOpacity(lofOpacity)};
 $('overlayToggle').onchange=e=>{lofVisible=e.target.checked;if(!lofOverlay)return;if(lofVisible){if(!map.hasLayer(lofOverlay))lofOverlay.addTo(map);else lofOverlay.draw()}else if(map.hasLayer(lofOverlay))map.removeLayer(lofOverlay)};
 $('copyLinkBtn').onclick=copyLink;$('exportBtn').onclick=exportCfg;
