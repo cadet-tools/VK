@@ -71,7 +71,7 @@ select,input{width:100%;background:#0f1511;color:#fff;border:1px solid var(--lin
 <div id="map"></div>
 
 <div class="topbar">
-  <div class="card title"><b>Vējiņu kauss 2026</b><span>Kontrolpunktu izvietošana · v5</span></div>
+  <div class="card title"><b>Vējiņu kauss 2026</b><span>Kontrolpunktu izvietošana · v6</span></div>
   <div class="spacer"></div>
   <button id="layersBtn" class="iconbtn" title="Slāņi">🗺️</button>
   <button id="adminBtn" class="iconbtn" title="Iestatījumi">⚙️</button>
@@ -89,7 +89,7 @@ select,input{width:100%;background:#0f1511;color:#fff;border:1px solid var(--lin
   </div>
   <div id="status" class="status warn">Vispirms nepieciešama kartes piesaiste koordinātēm.</div>
   <div class="row" style="margin-top:8px">
-    <button id="gpsBtn" class="btn secondary grow">📍 Sākt GPS</button>
+    <button id="gpsBtn" class="btn secondary grow">📍 Pieprasīt GPS</button>
     <button id="centerBtn" class="btn secondary">🎯 KP</button>
     <button id="cropBtn" class="btn secondary">LOF</button>
     <button id="placedBtn" class="btn good">✓ Izvietots</button>
@@ -183,6 +183,7 @@ let markers={};
 let targetId="21";
 let targetLatLng=null;
 let userLatLng=null,userAcc=null,userMarker=null,accCircle=null,routeLine=null,watchId=null;
+let gpsStarting=false;
 let lofOverlay=null, lofVisible=true, lofOpacity=.55, lvmLayer=null;
 let pendingPixel=null;
 let mapCalMarker=null;
@@ -339,15 +340,134 @@ function updateNav(){
   else if(d<=35){st.className='status warn';st.textContent=`Tuvojies KP ${targetId}. Pēdējos metros skaties arī LOF karti.`}
   else{st.className='status';st.textContent=`Virzies uz KP ${targetId}.`}
 }
-function startGps(){
-  if(!navigator.geolocation){alert('Šī pārlūkprogramma neatbalsta GPS.');return}
-  if(watchId!==null){navigator.geolocation.clearWatch(watchId);watchId=null;$('gpsBtn').textContent='📍 Sākt GPS';return}
-  watchId=navigator.geolocation.watchPosition(p=>{
-    userLatLng=L.latLng(p.coords.latitude,p.coords.longitude);userAcc=p.coords.accuracy;
-    if(!userMarker){userMarker=L.marker(userLatLng,{icon:L.divIcon({className:'',html:'<div class="user-dot"></div>',iconSize:[20,20],iconAnchor:[10,10]})}).addTo(map);accCircle=L.circle(userLatLng,{radius:userAcc,color:'#1976ff',weight:1,fillOpacity:.08}).addTo(map)}
-    else{userMarker.setLatLng(userLatLng);accCircle.setLatLng(userLatLng).setRadius(userAcc)}
-    $('gpsBtn').textContent='⏹ Apturēt GPS';updateNav();
-  },e=>alert('GPS kļūda: '+e.message),{enableHighAccuracy:true,maximumAge:1000,timeout:15000});
+function applyGpsPosition(p){
+  userLatLng=L.latLng(p.coords.latitude,p.coords.longitude);
+  userAcc=p.coords.accuracy;
+
+  if(!userMarker){
+    userMarker=L.marker(userLatLng,{
+      icon:L.divIcon({
+        className:'',
+        html:'<div class="user-dot"></div>',
+        iconSize:[20,20],
+        iconAnchor:[10,10]
+      })
+    }).addTo(map);
+    accCircle=L.circle(userLatLng,{
+      radius:userAcc,
+      color:'#1976ff',
+      weight:1,
+      fillOpacity:.08
+    }).addTo(map);
+  }else{
+    userMarker.setLatLng(userLatLng);
+    accCircle.setLatLng(userLatLng).setRadius(userAcc);
+  }
+
+  $('gpsBtn').disabled=false;
+  $('gpsBtn').textContent='⏹ Apturēt GPS';
+  gpsStarting=false;
+  updateNav();
+}
+
+function gpsErrorMessage(e){
+  if(e.code===1){
+    return 'Atrašanās vietas atļauja ir BLOĶĒTA. Pārlūka vietnes iestatījumos atļauj Location/Atrašanās vieta šai lapai un mēģini vēlreiz.';
+  }
+  if(e.code===2){
+    return 'Telefons pašlaik nevar noteikt atrašanās vietu. Ieslēdz telefona atrašanās vietas pakalpojumu (GPS/Location) un mēģini vēlreiz.';
+  }
+  if(e.code===3){
+    return 'GPS atrašanās vietas noteikšana aizņēma pārāk ilgi. Izej ārā vai pie loga un mēģini vēlreiz.';
+  }
+  return 'GPS kļūda: '+(e.message||'nezināma kļūda');
+}
+
+function handleGpsError(e){
+  gpsStarting=false;
+  if(watchId!==null){
+    navigator.geolocation.clearWatch(watchId);
+    watchId=null;
+  }
+  $('gpsBtn').disabled=false;
+  $('gpsBtn').textContent='📍 Pieprasīt GPS';
+  $('status').className='status bad';
+  $('status').textContent=gpsErrorMessage(e);
+}
+
+async function startGps(){
+  if(gpsStarting)return;
+
+  if(watchId!==null){
+    navigator.geolocation.clearWatch(watchId);
+    watchId=null;
+    $('gpsBtn').disabled=false;
+    $('gpsBtn').textContent='📍 Sākt GPS';
+    $('status').className='status warn';
+    $('status').textContent='GPS apturēts. Nospied “Sākt GPS”, lai turpinātu.';
+    return;
+  }
+
+  if(!window.isSecureContext){
+    $('status').className='status bad';
+    $('status').textContent='GPS pārlūkā darbojas tikai drošā HTTPS lapā.';
+    return;
+  }
+
+  if(!navigator.geolocation){
+    $('status').className='status bad';
+    $('status').textContent='Šī pārlūkprogramma neatbalsta atrašanās vietas noteikšanu.';
+    return;
+  }
+
+  gpsStarting=true;
+  $('gpsBtn').disabled=true;
+  $('gpsBtn').textContent='⏳ Gaida GPS atļauju…';
+  $('status').className='status warn';
+  $('status').textContent='Pārlūkam jāparāda atrašanās vietas atļaujas pieprasījums. Izvēlies “Atļaut”.';
+
+  // Chromium/Android var pateikt, ka atļauja jau iepriekš nobloķēta.
+  try{
+    if(navigator.permissions && navigator.permissions.query){
+      const perm=await navigator.permissions.query({name:'geolocation'});
+      if(perm.state==='denied'){
+        gpsStarting=false;
+        $('gpsBtn').disabled=false;
+        $('gpsBtn').textContent='📍 Pieprasīt GPS';
+        $('status').className='status bad';
+        $('status').textContent='Atrašanās vietas atļauja šai vietnei ir bloķēta. Atver pārlūka vietnes iestatījumus un atļauj “Location/Atrašanās vieta”.';
+        return;
+      }
+    }
+  }catch(_){}
+
+  // Pirmais vienreizējais pieprasījums tiek veikts tieši no lietotāja pogas
+  // nospiešanas, lai mobilais pārlūks droši parādītu permission dialogu.
+  navigator.geolocation.getCurrentPosition(
+    p=>{
+      applyGpsPosition(p);
+
+      watchId=navigator.geolocation.watchPosition(
+        applyGpsPosition,
+        e=>{
+          // Ja sākotnējā pozīcija jau iegūta, īslaicīgu timeout dēļ GPS neatceļam.
+          if(e.code===3)return;
+          handleGpsError(e);
+        },
+        {
+          enableHighAccuracy:true,
+          maximumAge:1000,
+          timeout:20000
+        }
+      );
+    },
+    handleGpsError,
+    {
+      enableHighAccuracy:true,
+      maximumAge:0,
+      timeout:20000
+    }
+  );
 }
 function nearest(){
   if(!userLatLng||!model){alert('Vispirms ieslēdz GPS un pabeidz kartes piesaisti.');return}
